@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <link rel="stylesheet" href="style.css">
+    </head>
+    <body>
+
+        <canvas id="building" class="building" >
+        </canvas>
+
+        <script>
+
+            var canvas = document.getElementById("building");
+            var ctx = canvas.getContext("2d");
+            
+            function startSimulation(){
+                // prepare the specs
+                canvas.width = 1000;
+                canvas.height = 600;
+                building_width = canvas.width - 20;
+                building_height = canvas.height - 20;
+                floors = 7;
+                floor_margin = canvas.height / 100;
+                floor_height = (building_height - floor_margin*(floors+1)) / floors;
+                elevator_width = building_width / 15;
+                elevator_speed = 2
+                buttons = [];
+                floorsQueue = [];
+                ding_sound = new sound('./ding.wav')
+                
+                // draw the building
+                ctx.fillStyle = '#d3d3d3';
+                ctx.fillRect(10,3,building_width,building_height);
+                for(let i=0; i<floors; ++i){
+                    ctx.fillStyle = '#808080';
+                    ctx.fillRect(15, floorPosition(i), building_width - 10,floor_height);
+                    ctx.fillStyle = '#008000';
+                    newButton = new button(building_width / 2 - 50, floorPosition(i) + (floor_height / 4 ), floor_height/3*2, floor_height/2);
+                    newButton.draw();
+                    buttons.push(newButton)
+
+                    ctx.fillStyle = '#000000';
+                    ctx.fillRect(building_width / 2 + 30, floorPosition(i) + (floor_height / 4 ), floor_height, floor_height/2)
+                }
+                shaft1 = new rectComponent(building_width / 3 ,3+floor_margin, elevator_width, building_height - floor_margin*2, '#203A4D')
+                shaft2 = new rectComponent(building_width*2 / 3 ,3+floor_margin, elevator_width, building_height - floor_margin*2, '#203A4D')
+                elevator1 = new elevator(building_width / 3, floorPosition(0), elevator_width, floor_height)
+                elevator2 = new elevator(building_width*2 / 3, floorPosition(0), elevator_width, floor_height)
+
+                interval = setInterval(updateSim, 20)
+                // handle button clicks
+                canvas.addEventListener('click', function(event) {
+                    var canvasRect = canvas.getBoundingClientRect();
+                    var mousePos = {x: (event.clientX - canvasRect.left) / window.innerWidth * canvas.width, y:(event.clientY - canvasRect.top) / window.innerHeight * canvas.height}
+                    console.log(mousePos.x + " " + mousePos.y)
+                    buttons.forEach((button, floor) => {
+                        if(isInside(mousePos, button)){
+                            if(!button.pressed){
+                                button.press();
+                                if(elevator1.busy && elevator2.busy){
+                                    floorsQueue.push(floor)
+                                }
+                                else{
+                                    if (elevator2.busy || !elevator1.busy && Math.abs(mousePos.y - elevator1.y) < Math.abs(mousePos.y - elevator2.y))
+                                        elevator1.setGoal(floor)
+                                    else
+                                        elevator2.setGoal(floor)
+                                }
+                            }
+                        }
+                    });
+                })
+            }
+
+            function floorPosition(floor_number){
+                return 3+floor_margin + (floor_margin+floor_height)*(6 - floor_number)
+            }
+
+            function isInside(pos, rect){
+                return pos.x > rect.x && pos.x < rect.x + rect.width && pos.y > rect.y && pos.y < rect.y + rect.height
+            }
+
+            function updateSim(){
+                shaft1.draw();
+                shaft2.draw();
+                elevator1.update();
+                elevator2.update();
+            }
+
+            function rectComponent(x, y, width, height, color){
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+
+                this.draw = function(){
+                    ctx.fillStyle = color;
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                }
+            }
+
+            function button(x, y, width, height){
+                this.pressed = false
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+
+                this.draw = function(){
+                    console.log(ctx.fillStyle)
+                    ctx.fillStyle = this.pressed ? '#ff0000' : '#008000';
+                    console.log(ctx.fillStyle)
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                }
+
+                this.press = function(){
+                    this.pressed = true;
+                    this.draw();
+                }
+
+                this.unpress = function(){
+                    this.pressed = false;
+                    this.draw();
+                }
+
+            }
+            
+            function elevator(x, y, width, height, color){
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.yGoal = Math.floor(this.y);
+                this.fGoal = 1;
+                this.busy = false;
+                this.moving = false;
+
+                this.draw = function(){
+                    ctx.fillStyle = this.busy ? '#ffa500' : '#ffff00';
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                }
+                this.update = function(){
+                    if(this.moving){
+                        this.y += (this.yGoal > this.y) ? elevator_speed : -elevator_speed ;
+                        // handle the showing of the remaining time until elevator reaches destination 
+                        time_remained = Math.abs(this.yGoal - this.y) / elevator_speed / 50;
+                        ctx.fillStyle = '#000000'
+                        ctx.fillRect(building_width / 2 + 30, floorPosition(this.fGoal) + (floor_height / 4 ), floor_height, floor_height/2)
+                        ctx.fillStyle = '#ffff00'
+                        ctx.font = "50px Ariel";
+                        ctx.fillText(Math.round(time_remained), building_width / 2 + 40, this.yGoal + floor_height*2/3+3);
+
+                        // handle reaching the right floor
+                        if(this.yGoal == Math.floor(this.y)){
+                            this.moving = false;
+                            buttons[this.fGoal].unpress();
+                            ding_sound.play();
+                            // make a 2-seconds delay before accepting next task
+                            setTimeout(function(){
+                                this.busy = false;
+                                ctx.fillStyle = '#000000'
+                                ctx.fillRect(building_width / 2 + 30, floorPosition(this.fGoal) + (floor_height / 4 ), floor_height, floor_height/2)
+                                if(floorsQueue.length > 0){
+                                    this.setGoal(floorsQueue.shift())
+                                }
+                            }.bind(this), 2000)
+                        }
+                    }
+                    this.draw();
+                }
+                this.setGoal = function(goal){
+                    this.busy = true;
+                    this.moving = true;
+                    this.fGoal = goal;
+                    this.yGoal = Math.floor(floorPosition(goal))
+                }
+                this.draw();
+            }
+
+            function sound(src){
+                this.sound = document.createElement("audio");
+                this.sound.src = src;
+                this.sound.setAttribute("preload", "auto");
+                this.sound.setAttribute("controls", "none");
+                this.sound.style.display = "none";
+                document.body.appendChild(this.sound);
+                this.play = function(){
+                    this.sound.play();
+                }
+                this.stop = function(){
+                    this.sound.pause();
+                }
+            }
+
+            startSimulation();
+
+        </script>
+
+    </body>
+</html>
